@@ -1,13 +1,13 @@
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox, scrolledtext, ttk
 import sqlparse
 from sqlparse.sql import IdentifierList, Identifier, Where, Comparison
-from sqlparse.tokens import Keyword, DML
+from sqlparse.tokens import Keyword
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-# --- METADADOS (Baseado na Imagem 01 do PDF) ---
+# --- METADADOS (Fonte: Imagem 01 do PDF) ---
 METADADOS = {
     "categoria": ["idcategoria", "descricao"],
     "produto": ["idproduto", "nome", "descricao", "preco", "quantestoque", "categoria_idcategoria"],
@@ -23,141 +23,140 @@ METADADOS = {
 
 class ProcessadorConsultas:
     def __init__(self):
-        self.tabelas = []
-        self.colunas = []
-        self.condicoes = []
-        self.joina_list = []
+        self.tabelas_na_query = []
+        self.filtros = []
 
-    def validar_e_parsear(self, sql_query):
-        """HU1 - Entrada e Validação da Consulta"""
+    def extrair_dados(self, sql_query):
+        """HU1 - Validação e Parsing Dinâmico [cite: 16, 145]"""
         parsed = sqlparse.parse(sql_query)
         if not parsed:
             raise ValueError("Consulta SQL inválida.")
         
         stmt = parsed[0]
-        self.tabelas = []
-        self.colunas = []
+        self.tabelas_na_query = []
+        self.filtros = []
         
-        # Extração básica de tokens
-        from_seen = False
+        # Busca tabelas e filtros (WHERE)
         for token in stmt.tokens:
-            if token.ttype is Keyword and token.value.upper() == 'FROM':
-                from_seen = True
-            if from_seen and isinstance(token, Identifier):
-                self.tabelas.append(token.get_real_name().lower())
-            elif from_seen and isinstance(token, IdentifierList):
+            # Tabelas no FROM e JOIN
+            if isinstance(token, Identifier):
+                self.tabelas_na_query.append(token.get_real_name().lower())
+            elif isinstance(token, IdentifierList):
                 for identifier in token.get_identifiers():
-                    self.tabelas.append(identifier.get_real_name().lower())
+                    self.tabelas_na_query.append(identifier.get_real_name().lower())
+            # Condições no WHERE
+            elif isinstance(token, Where):
+                for condition in token.tokens:
+                    if isinstance(condition, Comparison):
+                        self.filtros.append(condition.value)
 
-        # Validação de Metadados
-        for t in self.tabelas:
+        # Valida contra o modelo [cite: 24, 121]
+        self.tabelas_na_query = list(set(self.tabelas_na_query)) # Remover duplicatas
+        for t in self.tabelas_na_query:
             if t not in METADADOS:
-                raise ValueError(f"Tabela '{t}' não existe no modelo.")
-        
-        return "Consulta SQL válida e parseada com sucesso."
+                raise ValueError(f"Tabela '{t}' não existe no modelo de dados.")
 
-    def converter_algebra(self):
-        """HU2 - Conversão para Álgebra Relacional"""
-        # Exemplo simplificado de representação textual
-        tab_str = " ⨝ ".join(self.tabelas).upper()
-        return f"π (σ ({tab_str}))"
-
-    def gerar_grafo(self, otimizado=False):
-        """HU3 e HU4 - Construção e Otimização do Grafo"""
+    def gerar_grafo_otimizado(self):
+        """HU4 - Heurística de Redução de Tuplas e Atributos [cite: 46, 136]"""
         G = nx.DiGraph()
+        raiz = "π (Projeção Final)"
         
-        if not otimizado:
-            # Grafo Ingênuo: Tabelas -> Join -> Seleção -> Projeção
-            raiz = "π (Projeção Final)"
-            G.add_node(raiz)
-            sel = "σ (Condições)"
-            G.add_edge(sel, raiz)
-            
-            prev_join = sel
-            for i, tab in enumerate(self.tabelas):
-                node_tab = f"Tabela: {tab.upper()}"
-                G.add_edge(node_tab, prev_join)
+        # Se houver mais de uma tabela, precisamos de um Join [cite: 25]
+        if len(self.tabelas_na_query) > 1:
+            op_central = "⨝ (Junção Otimizada)"
         else:
-            # HU4 - Otimizado: Filtros aplicados logo após as tabelas (Push-down selection)
-            raiz = "π (Projeção Otimizada)"
-            G.add_node(raiz)
-            join_op = "⨝ (Junção)"
-            G.add_edge(join_op, raiz)
+            op_central = "Operação Única"
+
+        G.add_edge(op_central, raiz)
+
+        for tab in self.tabelas_na_query:
+            node_tab = f"TABELA: {tab.upper()}"
+            # Aplicando Heurística: Seleção vem ANTES da Junção [cite: 51, 149]
+            node_sel = f"σ (Filtro {tab.upper()})"
             
-            for tab in self.tabelas:
-                node_tab = f"Tabela: {tab.upper()}"
-                node_sel = f"σ (Redução Tuplas {tab.upper()})"
-                G.add_edge(node_tab, node_sel)
-                G.add_edge(node_sel, join_op)
-                
+            G.add_edge(node_tab, node_sel)
+            G.add_edge(node_sel, op_central)
+            
         return G
 
-# --- INTERFACE GRÁFICA (Tkinter) ---
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("UNIFOR - Processador de Consultas SQL")
-        self.root.geometry("1000x800")
+        self.root.title("UNIFOR - Otimizador de Consultas")
+        self.root.geometry("1100x850")
         self.proc = ProcessadorConsultas()
 
-        # Input
-        tk.Label(root, text="Digite sua consulta SQL:", font=('Arial', 12, 'bold')).pack(pady=5)
-        self.txt_sql = scrolledtext.ScrolledText(root, height=5, width=80)
-        self.txt_sql.pack(pady=5)
-        self.txt_sql.insert(tk.INSERT, "SELECT * FROM cliente JOIN pedido ON cliente.idCliente = pedido.Cliente_idCliente WHERE idCliente = 1")
+        # Layout Splitter
+        self.paned = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True)
 
-        # Botões
-        btn_frame = tk.Frame(root)
-        btn_frame.pack(pady=10)
-        tk.Button(btn_frame, text="Processar e Otimizar", command=self.processar, bg="#4CAF50", fg="black").pack(side=tk.LEFT, padx=5)
+        # Lado Esquerdo (Editor)
+        self.frame_left = ttk.Frame(self.paned, padding=15)
+        self.paned.add(self.frame_left, weight=1)
 
-        # Output Textual
-        self.txt_output = scrolledtext.ScrolledText(root, height=10, width=80, bg="#f0f0f0")
-        self.txt_output.pack(pady=5)
+        ttk.Label(self.frame_left, text="Entrada SQL", font=('Helvetica', 13, 'bold')).pack(anchor=tk.W)
+        self.txt_sql = scrolledtext.ScrolledText(self.frame_left, height=8, font=('Menlo', 12))
+        self.txt_sql.pack(fill=tk.X, pady=(5, 15))
+        self.txt_sql.insert(tk.INSERT, "SELECT * FROM cliente JOIN pedido WHERE idCliente = 10")
 
-        # Container para o Grafo
-        self.fig_frame = tk.Frame(root)
-        self.fig_frame.pack(fill=tk.BOTH, expand=True)
+        self.btn_action = ttk.Button(self.frame_left, text="Executar Otimização", command=self.executar)
+        self.btn_action.pack(fill=tk.X)
 
-    def processar(self):
+        ttk.Label(self.frame_left, text="Plano de Execução (HU5)", font=('Helvetica', 12, 'bold')).pack(anchor=tk.W, pady=(25, 5))
+        self.txt_log = scrolledtext.ScrolledText(self.frame_left, height=20, bg="#1e1e1e", fg="#00ff00", font=('Menlo', 11))
+        self.txt_log.pack(fill=tk.BOTH, expand=True)
+
+        # Lado Direito (Grafo)
+        self.frame_right = ttk.Frame(self.paned, padding=15)
+        self.paned.add(self.frame_right, weight=2)
+        
+        ttk.Label(self.frame_right, text="Grafo de Operadores (HU3)", font=('Helvetica', 13, 'bold')).pack(anchor=tk.W)
+        self.canvas_frame = ttk.Frame(self.frame_right, borderwidth=1, relief="solid")
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+    def executar(self):
         query = self.txt_sql.get("1.0", tk.END).strip()
         try:
-            # HU1
-            res = self.proc.validar_e_parsear(query)
-            # HU2
-            algebra = self.proc.converter_algebra()
+            # 1. Parsing e Validação (HU1)
+            self.proc.extrair_dados(query)
             
-            # HU5 - Plano de Execução (Texto)
-            plano = (
-                f"--- RESULTADOS ---\n"
-                f"1. Status: {res}\n"
-                f"2. Álgebra Relacional: {algebra}\n"
-                f"3. Plano de Execução:\n"
-                f"   a. Carregar tabelas: {', '.join(self.proc.tabelas)}\n"
-                f"   b. Aplicar Heurística: Redução de tuplas (Seleção antecipada)\n"
-                f"   c. Executar Junções\n"
-                f"   d. Projeção Final dos Atributos\n"
+            # 2. Log de Processamento (HU5) [cite: 59, 153]
+            log_text = (
+                f"> SQL VALIDADO COM SUCESSO\n"
+                f"> TABELAS DETECTADAS: {', '.join(self.proc.tabelas_na_query).upper()}\n"
+                f"> CONVERSÃO ÁLGEBRA: π ( σ ( {' ⨝ '.join(self.proc.tabelas_na_query).upper()} ) )\n\n"
+                f"ORDEM DE EXECUÇÃO:\n"
+                f"1. Acesso ao disco (Scan): {self.proc.tabelas_na_query}\n"
+                f"2. Aplicação de filtros σ (Heurística de Redução)\n"
+                f"3. Realização de Junções (⨝)\n"
+                f"4. Projeção final dos atributos (π)\n"
             )
+            self.txt_log.delete("1.0", tk.END)
+            self.txt_log.insert(tk.END, log_text)
             
-            self.txt_output.delete("1.0", tk.END)
-            self.txt_output.insert(tk.END, plano)
-            
-            self.plot_grafo()
+            # 3. Atualizar Grafo (HU3/HU4)
+            self.renderizar_grafo()
             
         except Exception as e:
-            messagebox.showerror("Erro", str(e))
+            messagebox.showerror("Erro", f"Falha no Processamento: {str(e)}")
 
-    def plot_grafo(self):
-        """Exibe o grafo otimizado na interface"""
-        for widget in self.fig_frame.winfo_children():
+    def renderizar_grafo(self):
+        for widget in self.canvas_frame.winfo_children():
             widget.destroy()
 
-        fig, ax = plt.subplots(figsize=(8, 4))
-        G = self.proc.gerar_grafo(otimizado=True)
-        pos = nx.spring_layout(G)
-        nx.draw(G, pos, with_labels=True, node_color='lightblue', node_size=3000, font_size=8, font_weight='bold', arrows=True, ax=ax)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        fig.patch.set_facecolor('#f0f0f0')
         
-        canvas = FigureCanvasTkAgg(fig, master=self.fig_frame)
+        G = self.proc.gerar_grafo_otimizado()
+        # Layout hierárquico para parecer uma árvore de decisão
+        pos = nx.spring_layout(G, seed=42) 
+        
+        nx.draw(G, pos, with_labels=True, 
+                node_color='#007AFF', node_size=3500, 
+                font_size=8, font_weight='bold', font_color='white',
+                edge_color='#8e8e93', width=1.5, arrows=True, ax=ax)
+        
+        canvas = FigureCanvasTkAgg(fig, master=self.canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 

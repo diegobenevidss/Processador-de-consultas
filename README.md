@@ -30,8 +30,8 @@ O projeto foi desenvolvido em **Python 3**, utilizando:
 
 1.  **Clonar o repositório:**
     ```bash
-    git clone [https://github.com/seu-utilizador/nome-do-repositorio.git](https://github.com/seu-utilizador/nome-do-repositorio.git)
-    cd nome-do-repositorio
+    git clone https://github.com/diegobenevidss/Processador-de-consultas.git
+    cd Projeto Banco Dados 2
     ```
 
 2.  **Instalar as dependências:**
@@ -41,7 +41,7 @@ O projeto foi desenvolvido em **Python 3**, utilizando:
 
 3.  **Executar a aplicação:**
     ```bash
-    python3 processador_consultas.py
+    python processador_consultas.py
     ```
 
 
