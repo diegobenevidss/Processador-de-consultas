@@ -27,7 +27,7 @@ class ProcessadorConsultas:
         self.algebrista = ""
 
     def validar_e_parsear(self, sql_query):
-        """HU1 - Entrada e Validação Completa [cite: 16, 22]"""
+        """HU1 - Entrada e Validação Completa"""
         query_limpa = " ".join(sql_query.split()).lower()
         parsed = sqlparse.parse(query_limpa)
         if not parsed: raise ValueError("Erro de sintaxe SQL.")
@@ -37,28 +37,39 @@ class ProcessadorConsultas:
         self.colunas_projecao = []
         self.filtros = {}
 
-        extraindo_from = False
+        from_visto = False
+        
         for token in stmt.tokens:
-            if token.ttype is sqlparse.tokens.Keyword and token.value == 'from':
-                extraindo_from = True
-            elif extraindo_from:
-                if isinstance(token, Identifier):
+            if token.is_whitespace: continue
+            
+            if token.ttype is sqlparse.tokens.Keyword and token.value.upper() == 'FROM':
+                from_visto = True
+                continue
+                
+            if not from_visto:
+                if isinstance(token, IdentifierList):
+                    for iden in token.get_identifiers():
+                        self.colunas_projecao.append(iden.get_real_name())
+                elif isinstance(token, Identifier):
+                    self.colunas_projecao.append(token.get_real_name())
+                elif token.value == '*':
+                    self.colunas_projecao.append("*")
+            else:
+                if isinstance(token, Where) or (token.ttype is sqlparse.tokens.Keyword and token.value.upper() in ['WHERE', 'GROUP BY', 'ORDER BY']):
+                    break
+                
+                if isinstance(token, IdentifierList):
+                    for iden in token.get_identifiers():
+                        self.tabelas.append(iden.get_real_name())
+                elif isinstance(token, Identifier):
                     self.tabelas.append(token.get_real_name())
-                elif isinstance(token, IdentifierList):
-                    for identifier in token.get_identifiers():
-                        self.tabelas.append(identifier.get_real_name())
-                if token.ttype is sqlparse.tokens.Keyword and token.value in ['where', 'join', 'on']:
-                    extraindo_from = False
 
+        ignorar = ['join', 'inner', 'left', 'right', 'on']
+        self.tabelas = [t for t in self.tabelas if t not in ignorar]
+
+        if not self.tabelas: raise ValueError("Nenhuma tabela encontrada após o FROM.")
         for t in self.tabelas:
-            if t not in METADADOS: raise ValueError(f"Tabela '{t}' não existe.")
-
-        for token in stmt.tokens:
-            if isinstance(token, IdentifierList):
-                for iden in token.get_identifiers():
-                    self.colunas_projecao.append(iden.get_real_name())
-            elif isinstance(token, Identifier):
-                self.colunas_projecao.append(token.get_real_name())
+            if t not in METADADOS: raise ValueError(f"Tabela '{t}' não existe no dicionário de dados.")
 
         if "*" not in self.colunas_projecao:
             for col in self.colunas_projecao:
@@ -73,6 +84,7 @@ class ProcessadorConsultas:
                     for tab in self.tabelas:
                         if col_filtro in METADADOS[tab]:
                             self.filtros[tab] = condition.value
+                            break 
         
         self.gerar_algebra()
 
